@@ -29,17 +29,22 @@ def MakingStopLine_S():
 #-----
 
 money = 200             # unit = $
+threshold = {
+    'volume': 5000000,
+    'div': 0.55,
+}
 margin = {
     "order": 2.5,
     "order_cancel": 10,
-    "profit": 5,       #unit = $
+    "profit": 12,       #unit = $
     "profit_rate": 0,  #unit = [100%]
     "lost": 30,         #unit = $
     "lost_rate": 0,    #unit = [100%]
 }
 span = {
     "long": 480,
-    "short": 60,
+    "short": 120,
+    "volume": 10,
 }
 
 counter = OrderedDict()
@@ -49,6 +54,7 @@ counter['bposlost'] = 0
 counter['spos'] = 0
 counter['sposprofit'] = 0
 counter['sposlost'] = 0
+counter['volume'] = 0
 
 cashier = OrderedDict()
 cashier['bposprofit'] = 0
@@ -70,40 +76,52 @@ data = pd.read_csv("historical_data.csv",
                  index_col='datetime',
                  names=['datetime', 'price', 'volume'])
 
-data["price"].plot(label="label-Price",legend=True)
 data['ewma_long'] = data['price'].ewm(span=span['long'], adjust=True).mean()
 data['ewma_short'] = data['price'].ewm(span=span['short'], adjust=True).mean()
-data['ewma_long'].plot(label="ewma long",legend=True)
-data['ewma_short'].plot(label="ewma short",legend=True)
-#plt.show()              # グラフ表示
+data['volume_avg'] = data['volume'].ewm(span=span['volume'], adjust=True).mean()
 
 data['div_long'] = (data['price'] - data['ewma_long']) / data['ewma_long'] * 100 # 長時間移動平均に対する乖離率
 data['div_short'] = (data['price'] - data['ewma_short']) / data['ewma_short'] * 100 # 短時間移動平均に対するそのときの乖離率
 
-for i, v in data.iterrows():
+fig, ax1 = plt.subplots()
+ax2 = ax1.twinx()
+data["price"].plot(label="label-Price",legend=True,ax = ax1,)
+data['ewma_long'].plot(label="ewma long",legend=True,ax = ax1,)
+data['ewma_short'].plot(label="ewma short",legend=True,ax = ax1,)
+data['div_long'].plot(label="div long",legend=True,ax = ax2,  linestyle='dashed')
+data['div_short'].plot(label="div short",legend=True,ax = ax2,  linestyle='dashed')
 
-#    print ('Time:' + str(i))
-#    print ('Pos:' + str(current['pos']))
-#    print ('Money:' + str(money))
+
+
+for i, v in data.iterrows():
 
 
     current['time'] = i
     current['price'] = v['price']
-    current['volume'] = v['volume']
+    current['volume'] = v['volume_avg']
     current['ewma_short'] = v['ewma_short']
     current['ewma_long'] = v['ewma_long']
     current['div_short'] = v['div_short']
     current['div_long'] = v['div_long']
 
+    #    print ('Time:' + str(i))
+    #    print ('Pos:' + str(current['pos']))
+    #    print ('Money:' + str(money))
+    print('Vol' + str(current['volume']))
+
     if current['pos'] == 'none':
-        if current['ewma_short'] > current['ewma_long']:         # 上げトレ
-            order['price'] = current['price'] - margin['order']
-            order['price_cancel_entry'] = current['price'] + margin['order_cancel']
-            current['pos'] = 'bought_w'
-        elif current['ewma_short'] < current['ewma_long']:         # 下げトレ
-            order['price'] = current['price'] + margin['order']
-            order['price_cancel_entry'] = current['price'] - margin['order_cancel']
-            current['pos'] = 'sold_w'
+        if threshold['div'] > abs(current['div_long']):
+            if threshold['volume'] > current['volume']:
+                if (current['ewma_short'] > current['ewma_long'] and current['price'] > current['ewma_short']) or (current['ewma_short'] < current['ewma_long'] and current['price'] > current['ewma_short']):         # 買いポジ
+                    order['price'] = current['price'] - margin['order']
+                    order['price_cancel_entry'] = current['price'] + margin['order_cancel']
+                    current['pos'] = 'bought_w'
+                if (current['ewma_short'] < current['ewma_long'] and current['price'] < current['ewma_short']) or (current['ewma_short'] > current['ewma_long'] and current['price'] < current['ewma_short']):         # 売りポジ
+                    order['price'] = current['price'] + margin['order']
+                    order['price_cancel_entry'] = current['price'] - margin['order_cancel']
+                    current['pos'] = 'sold_w'
+            else:
+                counter['volume'] +=1
 
     elif current['pos'] == 'bought_w':               #買いポジエントリーまちの時
         if order['price'] > current['price']:
@@ -162,7 +180,7 @@ for i, v in data.iterrows():
             current['pos'] = 'none'
             counter['sposlost'] += 1
             money = money - (order['size'] * order['stopline'])
-            cashier['sposlost'] += order['size'] * (order['price'] - order['profitline'])
+            cashier['sposlost'] += order['size'] * (order['price'] - order['stopline'])
             series = pd.Series([money, current['time']], index=account.columns)
             account = account.append(series, ignore_index=True)
 
@@ -178,3 +196,6 @@ for key, val in cashier.items():
 
 account.plot(x='time',y = 'money')
 plt.show()
+
+pd.set_option("display.max_rows", 2000)
+print (data['div_long'])
